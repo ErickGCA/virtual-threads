@@ -9,7 +9,7 @@ O objetivo principal foi ir além das discussões teóricas e obter um entendime
 - Como elas se comportam em tarefas que consomem intensamente a CPU?
 - Quais são suas implicações práticas para o desenvolvimento de aplicações concorrentes em Java?
 
-Este README, o código-fonte e a documentação mais extensa em LaTeX (disponível separadamente) registram o experimento, os resultados e os principais aprendizados.
+Este README, o código-fonte e a documentação mais extensa em LaTeX e PDF(disponível separadamente) registram o experimento, os resultados e os principais aprendizados.
 
 ## Configuração do Experimento
 
@@ -66,6 +66,5 @@ Nossa análise mais aprofundada (detalhada no documento LaTeX) também abordou:
 As Virtual Threads são uma adição poderosa e transformadora ao Java, especialmente para aplicações I/O-bound, onde melhoram drasticamente a escalabilidade e simplificam o código concorrente. Para tarefas CPU-bound, seu desempenho é comparável ao de platform threads bem configuradas. Compreender a natureza da carga de trabalho da sua aplicação é fundamental para aproveitá-las efetivamente.
 
 ## Documentação Detalhada
-Para uma análise mais aprofundada, incluindo a derivação das porcentagens, o código LaTeX completo e discussões mais extensas, por favor, consulte o PDF disponivel.
-
+Para uma análise mais aprofundada, incluindo a derivação das porcentagens, por favor, verifique o código LaTeX no diretório ou o PDF disponível em RELEASES no diretório.
 ---

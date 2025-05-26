@@ -1,0 +1,323 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[brazil]{babel} 
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{listings} 
+\usepackage{xcolor} 
+\usepackage{hyperref} 
+\hypersetup{
+    colorlinks=true,
+    urlcolor=black, 
+    linkcolor=black   
+}
+
+
+\geometry{a4paper, margin=1in}
+
+
+\newcommand{\linkedinErickCabral}{https://www.linkedin.com/in/erick-cabralgca}
+\newcommand{\linkedinPedroMunhoz}{https://www.linkedin.com/in/pedro-munhoz-675847222}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.98,0.98,0.98}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    language=Java
+}
+\lstset{style=mystyle}
+
+\title{Uma Análise Prática do Desempenho de Virtual Threads em Java}
+\author{Érick Gonçalves Cabral} \\ 
+\date{24 de maio de 2025}
+
+\begin{document}
+
+\makeatletter 
+\begin{titlepage}
+    \centering 
+    \vspace*{2.0cm} 
+    {\Large \@author \par} 
+    \vspace{0.4cm} 
+    {\normalsize Data Engineer \\
+    Full Stack Developer \par}
+    \vfill 
+
+    {\Huge \bfseries \@title \par} 
+
+    \vfill 
+    {\large \href{\linkedinErickCabral}{Perfil no LinkedIn} \par} 
+    
+    \vspace{0.5cm} 
+    {\large \@date \par} 
+    \vspace*{2cm} 
+
+    \thispagestyle{empty} 
+\end{titlepage}
+\makeatother 
+
+\begin{abstract}
+Este documento detalha um estudo prático comparando o desempenho de Virtual Threads e Platform Threads em Java sob cargas de trabalho I/O-bound e CPU-bound. O objetivo é fornecer clareza sobre os cenários onde as Virtual Threads oferecem vantagens significativas, utilizando código de exemplo, resultados de teste e uma análise das diferenças observadas.
+\end{abstract}
+\clearpage 
+\tableofcontents
+\clearpage
+
+\pagenumbering{arabic} 
+\section{Introdução}
+Com o lançamento do Projeto Loom e a introdução das Virtual Threads como um recurso padrão no Java 21, a comunidade de desenvolvedores tem explorado ativamente seu potencial. As Virtual Threads prometem simplificar o desenvolvimento de aplicações concorrentes de alta vazão, especialmente aquelas que lidam com um grande número de operações bloqueantes (I/O-bound).
+
+Minha inspiração para pesquisar um pouco mais e pesquisar sobre veio do post do Pedro Munhoz no Linkedin (\href{\linkedinPedroMunhoz}{Perfil do Pedro}), para sair do abstrato, realizei um teste prático com o intuito de observar e entender o impacto das Virtual Threads em comparação com as tradicionais Platform Threads. Esta documentação visa compartilhar a metodologia, o código utilizado, os resultados obtidos e as conclusões tiradas desta investigação.
+
+\section{O Experimento}
+
+\subsection{Configuração do Ambiente}
+Os testes foram conduzidos no seguinte ambiente:
+\begin{itemize}
+    \item \textbf{JDK:} Eclipse Adoptium JDK 21.0.4.7-hotspot
+    \item \textbf{Processador:} 8 núcleos disponíveis para a JVM
+    \item \textbf{Sistema Operacional:} Windows
+\end{itemize}
+
+\subsection{Código Utilizado}
+O código Java abaixo foi empregado para simular as tarefas I/O-bound e CPU-bound, e para gerenciar a execução utilizando tanto Platform Threads quanto Virtual Threads através de \texttt{ExecutorService}.
+
+\begin{lstlisting}[caption=Código Java do Experimento (ThreadComparisonDemo.java), label=lst:code]
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+
+public class ThreadComparisonDemo {
+
+    // --- Configuracoes para o cenário I/O-Bound ---
+    static final int IO_TASK_COUNT = 10_000;
+    static final int IO_TASK_SLEEP_MS = 50;
+
+    // --- Configuracoees para o cenário CPU-Bound ---
+    static final int CPU_CORE_MULTIPLIER = 2;
+    static final int CPU_TASK_COUNT = Runtime.getRuntime().availableProcessors() * CPU_CORE_MULTIPLIER;
+    static final long CPU_TASK_ITERATIONS = 30_000_000L;
+
+    static volatile double sharedCpuResultSink = 0;
+
+    static void ioBoundTask(int taskNumber) {
+        try {
+            Thread.sleep(IO_TASK_SLEEP_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.err.println("I/O Task " + taskNumber + " interrupted.");
+        }
+    }
+
+    static void cpuBoundTask(int taskNumber, long iterations) {
+        double result = 0;
+        for (long i = 0; i < iterations; i++) {
+            result += Math.sin(i) * Math.cos(i) * Math.tan(i / (iterations / 10.0 + 1.0));
+        }
+        sharedCpuResultSink += result;
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        System.out.println("JDK Version: " + System.getProperty("java.version"));
+        System.out.println("Available processors: " + Runtime.getRuntime().availableProcessors());
+        System.out.println("======================================================");
+
+        // --- Cenario I/O-Bound ---
+        System.out.println("--- I/O-Bound Scenario ---");
+        System.out.printf("Number of I/O tasks: %,d | Each task sleeps for: %d ms%n%n", IO_TASK_COUNT, IO_TASK_SLEEP_MS);
+
+        int platformIoThreadPoolSize = 200;
+        System.out.printf("Running I/O tasks with Platform Threads (Fixed Pool Size: %d)...%n", platformIoThreadPoolSize);
+        ExecutorService platformIoExecutor = Executors.newFixedThreadPool(platformIoThreadPoolSize);
+        long startTimePlatformIo = System.currentTimeMillis();
+        for (int i = 0; i < IO_TASK_COUNT; i++) {
+            final int taskNum = i;
+            platformIoExecutor.submit(() -> ioBoundTask(taskNum));
+        }
+        platformIoExecutor.shutdown();
+        platformIoExecutor.awaitTermination(5, TimeUnit.MINUTES);
+        long endTimePlatformIo = System.currentTimeMillis();
+        System.out.printf("Platform Threads (I/O): Total time = %,d ms%n%n", (endTimePlatformIo - startTimePlatformIo));
+
+        System.out.println("Running I/O tasks with Virtual Threads...");
+        ExecutorService virtualIoExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        long startTimeVirtualIo = System.currentTimeMillis();
+        for (int i = 0; i < IO_TASK_COUNT; i++) {
+            final int taskNum = i;
+            virtualIoExecutor.submit(() -> ioBoundTask(taskNum));
+        }
+        virtualIoExecutor.shutdown();
+        virtualIoExecutor.awaitTermination(5, TimeUnit.MINUTES);
+        long endTimeVirtualIo = System.currentTimeMillis();
+        System.out.printf("Virtual Threads (I/O): Total time = %,d ms%n%n", (endTimeVirtualIo - startTimeVirtualIo));
+        System.out.println("------------------------------------------------------");
+
+        // --- Cenario CPU-Bound ---
+        System.out.println("\n--- CPU-Bound Scenario ---");
+        System.out.printf("Number of CPU tasks: %d | Iterations per CPU task: %,d%n%n", CPU_TASK_COUNT, CPU_TASK_ITERATIONS);
+        sharedCpuResultSink = 0;
+
+        int platformCpuThreadPoolSize = Runtime.getRuntime().availableProcessors();
+        System.out.printf("Running CPU tasks with Platform Threads (Fixed Pool Size: %d)...%n", platformCpuThreadPoolSize);
+        ExecutorService platformCpuExecutor = Executors.newFixedThreadPool(platformCpuThreadPoolSize);
+        long startTimePlatformCpu = System.currentTimeMillis();
+        for (int i = 0; i < CPU_TASK_COUNT; i++) {
+            final int taskNum = i;
+            platformCpuExecutor.submit(() -> cpuBoundTask(taskNum, CPU_TASK_ITERATIONS));
+        }
+        platformCpuExecutor.shutdown();
+        platformCpuExecutor.awaitTermination(5, TimeUnit.MINUTES);
+        long endTimePlatformCpu = System.currentTimeMillis();
+        System.out.printf("Platform Threads (CPU): Total time = %,d ms%n%n", (endTimePlatformCpu - startTimePlatformCpu));
+        sharedCpuResultSink = 0;
+
+        System.out.println("Running CPU tasks with Virtual Threads...");
+        ExecutorService virtualCpuExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        long startTimeVirtualCpu = System.currentTimeMillis();
+        for (int i = 0; i < CPU_TASK_COUNT; i++) {
+            final int taskNum = i;
+            virtualCpuExecutor.submit(() -> cpuBoundTask(taskNum, CPU_TASK_ITERATIONS));
+        }
+        virtualCpuExecutor.shutdown();
+        virtualCpuExecutor.awaitTermination(5, TimeUnit.MINUTES);
+        long endTimeVirtualCpu = System.currentTimeMillis();
+        System.out.printf("Virtual Threads (CPU): Total time = %,d ms%n%n", (endTimeVirtualCpu - startTimeVirtualCpu));
+        System.out.println("======================================================");
+    }
+}
+\end{lstlisting}
+
+\subsection{Cenários de Teste}
+Dois cenários principais foram avaliados:
+\begin{enumerate}
+    \item \textbf{I/O-Bound:} Simulação de $10.000$ tarefas, onde cada tarefa realiza uma pausa de $50~ms$ (\texttt{Thread.sleep(50)}) para mimetizar operações de I/O bloqueantes, como chamadas de rede ou acesso a banco de dados. As Platform Threads foram limitadas a um pool de $200$.
+    \item \textbf{CPU-Bound:} Simulação de $16$ tarefas ($2 \times$ número de núcleos da CPU) que executam um loop computacionalmente intensivo com $30.000.000$ de iterações. As Platform Threads foram configuradas com um pool de $8$ threads (igual ao número de núcleos da CPU).
+\end{enumerate}
+
+\section{Resultados e Análise}
+A execução do código de teste produziu a seguinte saída no console:
+\begin{verbatim}
+JDK Version: 21.0.4
+Available processors: 8
+======================================================
+--- I/O-Bound Scenario ---
+Number of I/O tasks: 10.000 | Each task sleeps for: 50 ms
+
+Running I/O tasks with Platform Threads (Fixed Pool Size: 200)...
+Platform Threads (I/O): Total time = 3255 ms
+
+Running I/O tasks with Virtual Threads...
+Virtual Threads (I/O): Total time = 506 ms
+
+------------------------------------------------------
+
+--- CPU-Bound Scenario ---
+Number of CPU tasks: 16 | Iterations per CPU task: 30.000.000
+
+Running CPU tasks with Platform Threads (Fixed Pool Size: 8)...
+Platform Threads (CPU): Total time = 14.667 ms
+
+Running I/O tasks with Virtual Threads...
+Virtual Threads (CPU): Total time = 14.300 ms
+
+======================================================
+\end{verbatim}
+
+\subsection{Cenário I/O-Bound}
+\begin{itemize}
+    \item \textbf{Platform Threads (pool de 200):} Tempo total = $3255~ms$.
+    \item \textbf{Virtual Threads:} Tempo total = $506~ms$.
+\end{itemize}
+Como podemos ver, as Virtual Threads demonstraram uma superioridade relevante. Elas completaram as $10.000$ tarefas em aproximadamente \textbf{15,55\%} do tempo levado pelas Platform Threads, representando uma \textbf{redução de 84,45\%} no tempo de execução, ou, em outras palavras, foram cerca de \textbf{6,43 vezes mais rápidas} ($3255 / 506 \approx 6,43$).
+
+Isso ocorre porque as Virtual Threads são leves e não monopolizam uma thread do sistema operacional (SO) durante operações bloqueantes. Quando uma virtual thread executa \texttt{Thread.sleep()}, ela é ``desmontada'' da sua carrier thread (uma platform thread), permitindo que a carrier thread execute outras virtual threads. Com um pool de apenas 200 platform threads, cada uma teria que lidar, em média, com 50 tarefas bloqueantes em sequência, levando a um tempo total muito maior. As Virtual Threads, por outro lado, gerenciam essa concorrência massiva de forma eficiente.
+
+Pense assim: essas `tarefas virtuais' são superleves e espertas. Quando uma delas precisa esperar por algo (como uma pesquisa no google ou simplesmente esperar), ela não fica ocupando um dos `ajudantes' principais do seu computador à toa. Em vez disso, ela `dá licença' temporariamente, e o `ajudante' principal fica livre para atender outras tarefas virtuais que estão ``prontas''.
+
+Agora, imagine o oposto: se você tivesse poucos `ajudantes' principais e cada um pegasse uma fila enorme de tarefas que ficam parando e esperando, uma atrás da outra. Tudo ficaria super lento, porque os `ajudantes' ficariam presos nessas esperas.
+
+Com as `tarefas virtuais', mesmo que você tenha milhares delas precisando esperar ao mesmo tempo, o sistema dá conta do recado muito melhor. Elas se organizam de um jeito que não travam tudo, permitindo que o computador faça muito mais coisas ao mesmo tempo sem sufocar.
+
+\subsection{Cenário CPU-Bound}
+\begin{itemize}
+    \item \textbf{Platform Threads (pool de 8):} Tempo total = $14.667~ms$.
+    \item \textbf{Virtual Threads:} Tempo total = $14.300~ms$.
+\end{itemize}
+Aqui, a diferença de desempenho foi mínima. As Virtual Threads foram marginalmente mais rápidas, cerca de \textbf{2,50\%} ($ (14667 - 14300) / 14667 \times 100\% $). Essa pequena variação está dentro do esperado para flutuações normais de execução e não indica uma vantagem intrínseca das Virtual Threads para cargas puramente computacionais.
+
+Ambas as abordagens são limitadas pela capacidade de processamento dos 8 núcleos da CPU. As Virtual Threads, embora leves para criar, ainda executam o trabalho computacional em carrier threads, cujo número é, por padrão, igual ao de processadores disponíveis. Portanto, não há um aumento na capacidade de processamento paralelo para este tipo de tarefa, abaixo outro exemplo que comprova o ponto, visto que dessa vez a Plataform Threads superou a Virtual Threads com a mesma amostra.
+\begin{verbatim}
+--- CPU-Bound Scenario ---
+Number of CPU tasks: 16 | Iterations per CPU task: 30.000.000
+
+Running CPU tasks with Platform Threads (Fixed Pool Size: 8)...
+Platform Threads (CPU): Total time = 12.903 ms
+
+Running CPU tasks with Virtual Threads...
+Virtual Threads (CPU): Total time = 13.403 ms
+\end{verbatim}
+
+\begin{itemize}
+    \item \textbf{Platform Threads (pool de 8):} Tempo total = $12.903~ms$.
+    \item \textbf{Virtual Threads:} Tempo total = $13.403~ms$.
+\end{itemize}
+
+
+\section{Discussão sobre Escalabilidade e Limites}
+A melhoria de $6,43$ vezes no cenário I/O-bound, observada com $10.000$ tarefas, é um indicativo claro do potencial das Virtual Threads. Se aumentássemos o número de tarefas (e.g., para $100.000$ ou mais), mantendo o pool de Platform Threads fixo e limitado, é altamente provável que esse fator de ganho das Virtual Threads se tornasse ainda mais expressivo. Isso ocorre porque o tempo de execução das Platform Threads (com pool fixo) tende a degradar-se de forma mais acentuada com o aumento do número de tarefas bloqueantes, enquanto as Virtual Threads são projetadas para lidar com essa escala de concorrência bloqueante de forma muito mais eficiente.
+
+No entanto, é crucial entender que nem as Virtual Threads possuem escalabilidade infinita. Seus limites práticos incluem:
+\begin{itemize}
+    \item \textbf{Consumo de Memória (Heap):} Embora cada virtual thread seja significativamente mais leve que uma platform thread em termos de consumo de stack, milhões delas ainda consumirão uma quantidade considerável de memória no heap para seus metadados e para as estruturas de dados que utilizam.
+    \item \textbf{Overhead de Gerenciamento da JVM:} A JVM necessita de recursos de CPU para criar, agendar, estacionar (park) e liberar (unpark) um grande número de virtual threads. Em volumes extremamente altos, esse overhead de gerenciamento pode se tornar um novo gargalo.
+    \item \textbf{Limites de Recursos Externos:} A capacidade da rede, a latência do disco, o número máximo de conexões de um banco de dados ou os limites de taxa de APIs externas continuarão sendo fatores limitantes. As Virtual Threads permitem que sua aplicação sature esses recursos mais facilmente, mas não podem aumentar a capacidade intrínseca desses sistemas externos.
+    \item \textbf{Saturação do Pool de Carrier Threads:} Se as tarefas, mesmo sendo predominantemente I/O-bound, tiverem pequenas, mas frequentes, rajadas de trabalho CPU entre as operações de I/O, um número astronômico de tarefas poderia, teoricamente, pressionar o pool de carrier threads (que é limitado, por padrão, ao número de núcleos da CPU).
+\end{itemize}
+
+Apesar desses limites, o ponto fundamental é que as Virtual Threads brilham intensamente em \textbf{aplicações I/O-bound} (e isso é realmente muito bacana, ver o ganho me fez sorrir), onde as tarefas passam a maior parte do tempo esperando por respostas externas. Nesses cenários, elas permitem uma utilização de recursos drasticamente melhor e um aumento significativo no throughput, possibilitando que um servidor lide com muito mais requisições concorrentes com o mesmo hardware.
+
+É importante também mencionar algumas \textbf{limitações e considerações atuais}. Uma delas é o fenômeno de ``pinning'' da carrier thread. Se uma virtual thread executa código dentro de um bloco \texttt{synchronized} extenso que realiza uma operação bloqueante, ou se executa um método nativo (JNI) que bloqueia, a carrier thread pode ficar ``presa'' (pinned) à virtual thread. Isso significa que a carrier thread não pode ser liberada para executar outra virtual thread, reduzindo temporariamente os benefícios de escalabilidade para aquela operação específica. Bibliotecas legadas ou código que faz uso intensivo de \texttt{synchronized} em torno de operações de I/O podem precisar de atenção ou adaptação para se beneficiarem plenamente das virtual threads. Mas isso com certeza será resolvido pela comunidade!
+
+
+
+\section{Conclusão}
+Os testes práticos e a discussão subsequente confirmaram os principais aspectos das Virtual Threads em Java e demonstraram o avanço que significa:
+\begin{enumerate}
+    \item Para cargas de trabalho \textbf{I/O-bound}, as Virtual Threads oferecem um ganho de desempenho e escalabilidade substancial em comparação com Platform Threads tradicionais. Elas simplificam a escrita de código concorrente para I/O, permitindo um estilo de bloqueio sequencial que escala eficientemente.
+    \item Para cargas de trabalho \textbf{CPU-bound}, as Virtual Threads apresentam um desempenho comparável a um pool de Platform Threads devidamente dimensionado. O gargalo continua sendo a capacidade de processamento da CPU.
+    \item Embora elevem drasticamente o teto de escalabilidade para I/O, as Virtual Threads possuem limites práticos (memória, overhead de gerenciamento, capacidade de recursos externos) e considerações importantes como o ``pinning'' de carrier threads em conjunto com certas construções de código (como \texttt{synchronized} em operações bloqueantes).
+\end{enumerate}
+Este experimento mostra como é crucial entender a carga de trabalho da aplicação antes de escolher uma estratégia de concorrência. As Virtual Threads são, sem dúvida, uma adição poderosa e transformadora ao ecossistema Java, democratizando o desenvolvimento de aplicações de alta performance e alta concorrência.
+
+
+\section*{Referências}
+\begin{itemize}
+    \item JEP 444: Virtual Threads. OpenJDK. Disponível em: \href{https://openjdk.org/jeps/444}{https://openjdk.org/jeps/444}.
+    \item Oracle. Documentação Oficial sobre Virtual Threads (Exemplo). Disponível em: \href{https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html}{URL da documentação da Oracle}.
+    \item Munhoz, Pedro. Post que me inspirou a escrever sobre o assunto. Disponível em: \href{\linkedinPedroMunhoz}{Perfil de Pedro Munhoz}.
+\end{itemize}
+
+
+\end{document}
