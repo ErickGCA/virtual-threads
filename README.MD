@@ -44,7 +44,7 @@ O experimento demonstrou distinções claras de desempenho entre os dois tipos d
 
 ### 1. Cenário I/O-Bound
 - **Configuração da Tarefa:** 10.000 tarefas, cada uma simulando uma espera (sleep) de 50ms.
-- **Platform Threads (Pool de 200 threads):** Tempo total $\approx$ **3.255 ms**
+- **Platform Threads (Pool de 200 threads):** Tempo total $\approx$ **3255 ms**
 - **Virtual Threads:** Tempo total $\approx$ **506 ms**
 - **Observação:** As Virtual Threads foram aproximadamente **6,43 vezes mais rápidas**, resultando em uma redução de cerca de **84,5%** no tempo de execução. Isso evidencia sua notável eficiência ao lidar com um grande volume de operações concorrentes que passam a maior parte do tempo bloqueadas (esperando).
 
