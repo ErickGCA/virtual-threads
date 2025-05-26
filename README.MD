@@ -66,5 +66,8 @@ Nossa análise mais aprofundada (detalhada no documento LaTeX) também abordou:
 As Virtual Threads são uma adição poderosa e transformadora ao Java, especialmente para aplicações I/O-bound, onde melhoram drasticamente a escalabilidade e simplificam o código concorrente. Para tarefas CPU-bound, seu desempenho é comparável ao de platform threads bem configuradas. Compreender a natureza da carga de trabalho da sua aplicação é fundamental para aproveitá-las efetivamente.
 
 ## Documentação Detalhada
-Para uma análise mais aprofundada, incluindo a derivação das porcentagens, por favor, verifique o código LaTeX no diretório ou o PDF disponível em RELEASES no diretório.
+Para uma análise mais aprofundada, incluindo a derivação das porcentagens, por favor, verifique o código LaTeX ou o PDF disponível em Releases, ambos no diretório. 
+
 ---
+
+Autor: Érick Cabral
